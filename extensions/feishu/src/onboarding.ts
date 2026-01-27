@@ -46,7 +46,7 @@ async function noteFeishuCredentialsHelp(prompter: WizardPrompter): Promise<void
       "4) Get App ID and App Secret from Credentials page",
       "5) Set event subscription to 'Long Connection' (WebSocket)",
       "Tip: you can also set FEISHU_APP_ID and FEISHU_APP_SECRET in your env.",
-      "Docs: https://docs.clawd.bot/channels/feishu",
+      "Docs: https://docs.clawd.bot/channels/feishu ",
     ].join("\n"),
     "Feishu app credentials",
   );
