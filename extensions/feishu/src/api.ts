@@ -158,6 +158,16 @@ export async function callFeishuApi<T = unknown>(
 }
 
 /**
+ * Bot info response from /bot/v3/info.
+ * Note: This API returns data in `bot` field instead of standard `data` field.
+ */
+type FeishuBotInfoResponse = {
+  code: number;
+  msg: string;
+  bot?: FeishuBotInfo;
+};
+
+/**
  * Get bot info for validation.
  */
 export async function getBotInfo(
@@ -166,11 +176,41 @@ export async function getBotInfo(
   options?: { timeoutMs?: number; fetch?: FeishuFetch },
 ): Promise<FeishuApiResponse<FeishuBotInfo>> {
   const token = await getTenantAccessToken(appId, appSecret, options);
-  return callFeishuApi<FeishuBotInfo>("/bot/v3/info", token, {
-    method: "GET",
-    timeoutMs: options?.timeoutMs,
-    fetch: options?.fetch,
-  });
+
+  // Direct API call since /bot/v3/info uses non-standard response format (bot field instead of data)
+  let url = `${FEISHU_API_BASE}/bot/v3/info`;
+
+  const controller = new AbortController();
+  const timeoutId = options?.timeoutMs
+    ? setTimeout(() => controller.abort(), options.timeoutMs)
+    : undefined;
+  const fetcher = options?.fetch ?? fetch;
+
+  try {
+    const response = await fetcher(url, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      signal: controller.signal,
+    });
+
+    const data = (await response.json()) as FeishuBotInfoResponse;
+
+    if (data.code !== 0) {
+      throw new FeishuApiError(data.msg ?? "Feishu API error: /bot/v3/info", data.code, data.msg);
+    }
+
+    // Convert bot field to standard data field format
+    return {
+      code: data.code,
+      msg: data.msg,
+      data: data.bot,
+    };
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 }
 
 /**

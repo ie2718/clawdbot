@@ -17,6 +17,7 @@ import type {
 } from "./types.js";
 import { sendMessage } from "./api.js";
 import { getFeishuRuntime } from "./runtime.js";
+import { probeFeishu } from "./probe.js";
 
 export type FeishuRuntimeEnv = {
   log?: (message: string) => void;
@@ -100,6 +101,7 @@ async function processMessageEvent(
   core: FeishuCoreRuntime,
   mediaMaxMb: number,
   statusSink?: (patch: { lastInboundAt?: number; lastOutboundAt?: number }) => void,
+  botOpenId?: string,
 ): Promise<void> {
   const { sender, message } = event;
 
@@ -214,8 +216,8 @@ async function processMessageEvent(
 
     if (groupPolicy === "allowlist") {
       const groupAllowed = groupAllowFrom.includes("*") || groupAllowFrom.includes(chatId);
-      const groupEnabled = groupConfig?.enabled !== false;
-      if (!groupAllowed && !groupEnabled) {
+      const groupExplicitlyEnabled = groupConfig?.enabled === true;
+      if (!groupAllowed && !groupExplicitlyEnabled) {
         logVerbose(core, runtime, `Blocked feishu group ${chatId} (not in allowlist)`);
         return;
       }
@@ -224,11 +226,12 @@ async function processMessageEvent(
     // Check if mention is required
     const requireMention = groupConfig?.requireMention !== false;
     if (requireMention) {
+      // Match mentions using botOpenId (ou_xxx format), not appId (cli_xxx format)
       const hasMention = message.mentions?.some(
-        (m) => m.id.open_id === account.appId || m.name === "@_all",
+        (m) => m.id.open_id === botOpenId || m.name === "@_all",
       );
       if (!hasMention) {
-        logVerbose(core, runtime, `Ignored feishu group message (no mention)`);
+        logVerbose(core, runtime, `Ignored feishu group message (no mention, botOpenId=${botOpenId})`);
         return;
       }
     }
@@ -384,6 +387,20 @@ export async function monitorFeishuProvider(
   const core = getFeishuRuntime();
   const effectiveMediaMaxMb = account.config.mediaMaxMb ?? DEFAULT_MEDIA_MAX_MB;
 
+  // Get bot open_id for group mention matching
+  let botOpenId: string | undefined;
+  try {
+    const probe = await probeFeishu(account.appId, account.appSecret, 5000);
+    botOpenId = probe.bot?.open_id;
+    if (botOpenId) {
+      runtime.log?.(`[feishu] Bot open_id resolved: ${botOpenId}`);
+    } else {
+      runtime.error?.(`[feishu] Warning: Could not resolve bot open_id, group mentions may not work`);
+    }
+  } catch (err) {
+    runtime.error?.(`[feishu] Failed to probe bot info: ${String(err)}`);
+  }
+
   let stopped = false;
   let wsClient: Lark.WSClient | null = null;
 
@@ -424,6 +441,7 @@ export async function monitorFeishuProvider(
           core,
           effectiveMediaMaxMb,
           statusSink,
+          botOpenId,
         );
       } catch (err) {
         runtime.error?.(`[${account.accountId}] Feishu event handler failed: ${String(err)}`);
